@@ -1,47 +1,42 @@
+
 import React, { useState } from 'react';
 import { useApp } from '../AppContext';
-import { BookOpen, Star, CheckCircle, Clock } from 'lucide-react';
+import { CheckCircle, Clock, Star } from 'lucide-react';
+import StudyLogModal from '../components/StudyLogModal';
 
 const StudyPage: React.FC = () => {
   const { user, logStudySession } = useApp();
   const [duration, setDuration] = useState<number>(30);
   const [isCustom, setIsCustom] = useState(false);
-  const [selectedBuddies, setSelectedBuddies] = useState<string[]>([]);
+  const [showLogModal, setShowLogModal] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [earnedPoints, setEarnedPoints] = useState(0);
 
   if (!user) return null;
 
-  const toggleBuddy = (id: string) => {
-    setSelectedBuddies(prev => 
-      prev.includes(id) ? prev.filter(bid => bid !== id) : [...prev, id]
-    );
-  };
-
-  const handleLogSession = () => {
-    if (duration <= 0) return;
-
-    // Calculate pts to show in success animation
+  const handleConfirmLog = (buddyIds: string[]) => {
+    // Calculate pts to show in success animation locally for immediate feedback
     const basePoints = Math.floor(duration / 30) * 10;
     let bonus = 0;
-    selectedBuddies.forEach(id => {
+    buddyIds.forEach(id => {
       const b = user.buddies.find(buddy => buddy.id === id);
       if (b) {
-        // Bonus if they share ANY class
         bonus += (b.sharedClasses && b.sharedClasses.length > 0) ? 20 : 10;
       }
     });
 
     const total = basePoints + bonus;
     setEarnedPoints(total);
-    logStudySession(duration, selectedBuddies);
+    logStudySession(duration, buddyIds);
     
+    setShowLogModal(false);
     setShowSuccess(true);
+    
+    // Reset page state after success
     setTimeout(() => {
       setShowSuccess(false);
       setDuration(30);
       setIsCustom(false);
-      setSelectedBuddies([]);
     }, 4000);
   };
 
@@ -57,7 +52,7 @@ const StudyPage: React.FC = () => {
   return (
     <div className="p-6 max-w-md mx-auto min-h-screen pb-32">
       {/* Success Notification Overlay */}
-      <div className={`fixed inset-0 z-[100] flex items-center justify-center pointer-events-none transition-all duration-500 ${showSuccess ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}>
+      <div className={`fixed inset-0 z-[200] flex items-center justify-center pointer-events-none transition-all duration-500 ${showSuccess ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}>
         <div className="bg-slate-800 text-white p-8 rounded-[44px] shadow-2xl flex flex-col items-center gap-4 border border-white/10 backdrop-blur-md">
           <div className="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center mb-2 animate-bounce">
             <CheckCircle size={40} />
@@ -122,54 +117,32 @@ const StudyPage: React.FC = () => {
         )}
       </div>
 
-      {/* Buddy Selection */}
-      <div className="mb-12">
-        <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6 ml-1">Who did you study with?</h3>
-        
-        <div className="grid grid-cols-2 gap-4">
-          {user.buddies.map(buddy => (
-            <button
-              key={buddy.id}
-              onClick={() => toggleBuddy(buddy.id)}
-              className={`flex items-center gap-4 p-4 rounded-3xl border transition-all ${selectedBuddies.includes(buddy.id) ? 'bg-white border-[#ff6b6b] shadow-lg shadow-red-50' : 'bg-white border-slate-100 shadow-sm'}`}
-            >
-              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-xs font-black ${selectedBuddies.includes(buddy.id) ? 'bg-[#ff6b6b] text-white' : 'bg-slate-100 text-slate-400'}`}>
-                {buddy.initials}
-              </div>
-              <div className="text-left overflow-hidden">
-                <p className={`text-xs font-black tracking-tight truncate ${selectedBuddies.includes(buddy.id) ? 'text-slate-800' : 'text-slate-500'}`}>
-                  {buddy.name}
-                </p>
-                {buddy.sharedClasses && buddy.sharedClasses.length > 0 && (
-                  <div className="flex items-center gap-1 mt-0.5">
-                    <Star size={8} className="text-yellow-400 fill-yellow-400" />
-                    <span className="text-[8px] font-black text-slate-300 uppercase tracking-tighter truncate">Classmate</span>
-                  </div>
-                )}
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Log Button */}
+      {/* Primary Log Button - Moved Up */}
       <button
-        onClick={handleLogSession}
+        onClick={() => setShowLogModal(true)}
         disabled={duration <= 0 || showSuccess}
-        className="w-full bg-slate-800 hover:bg-slate-900 text-white font-black py-5 rounded-[24px] shadow-xl shadow-slate-200 transition-all active:scale-[0.98] uppercase text-xs tracking-widest flex items-center justify-center gap-3 disabled:opacity-50"
+        className="w-full bg-slate-800 hover:bg-slate-900 text-white font-black py-6 rounded-[28px] shadow-xl shadow-slate-200 transition-all active:scale-[0.98] uppercase text-xs tracking-widest flex items-center justify-center gap-3 disabled:opacity-50 mb-10"
       >
         <Clock size={18} />
         Log Session
       </button>
 
-      <div className="mt-6 flex items-center gap-3 bg-blue-50 p-4 rounded-3xl border border-blue-100">
-        <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white">
-          <Star size={14} fill="white" />
+      <div className="flex items-center gap-3 bg-blue-50 p-6 rounded-[32px] border border-blue-100">
+        <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center text-white shrink-0">
+          <Star size={16} fill="white" />
         </div>
-        <p className="text-[10px] font-black text-blue-500 uppercase tracking-tight leading-relaxed">
-          Tip: Studying with classmates grants <span className="text-blue-700">+20 bonus points</span> instead of +10!
+        <p className="text-[11px] font-black text-blue-500 uppercase tracking-tight leading-relaxed">
+          Tip: Studying with classmates grants <span className="text-blue-700">+20 bonus points</span> instead of +10! Use Group Sync to connect with more friends.
         </p>
       </div>
+
+      {showLogModal && (
+        <StudyLogModal 
+          duration={duration}
+          onClose={() => setShowLogModal(false)}
+          onConfirm={handleConfirmLog}
+        />
+      )}
     </div>
   );
 };

@@ -1,33 +1,61 @@
 
 import React, { useState } from 'react';
 import { useApp } from '../AppContext';
-import { ChevronLeft, Save, Trash2, AlertTriangle, Check } from 'lucide-react';
+import { ChevronLeft, Save, Trash2, AlertTriangle, Check, LogOut } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const SettingsPage: React.FC = () => {
-  const { user, updateSettings, deleteAccount } = useApp();
+  const { user, updateSettings, deleteAccount, updateName, logout } = useApp();
   const navigate = useNavigate();
 
+  const [name, setName] = useState(user?.name || '');
   const [email, setEmail] = useState(user?.email || '');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [toast, setToast] = useState<{message: string, show: boolean, error?: boolean}>({message: '', show: false});
+  const [isSaving, setIsSaving] = useState(false);
 
   if (!user) return null;
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    setIsSaving(true);
     if (newPassword && newPassword !== confirmPassword) {
       setToast({ message: "Passwords do not match", show: true, error: true });
       setTimeout(() => setToast({ message: '', show: false }), 3000);
+      setIsSaving(false);
       return;
     }
 
-    updateSettings(email, newPassword || undefined);
-    setToast({ message: "Settings saved successfully!", show: true });
-    setNewPassword('');
-    setConfirmPassword('');
-    setTimeout(() => setToast({ message: '', show: false }), 3000);
+    try {
+      // Update name in Firebase & Firestore
+      if (name !== user.name) {
+        await updateName(name);
+      }
+      
+      // Update Auth Settings (Password/Email Sync)
+      await updateSettings(email, newPassword || undefined);
+      
+      setToast({ message: "Settings saved successfully!", show: true });
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err: any) {
+      console.error(err);
+      let errorMessage = "Failed to update settings";
+      
+      if (err.code === 'auth/requires-recent-login') {
+        errorMessage = "Please re-login to change password";
+      } else if (err.code === 'permission-denied') {
+        errorMessage = "Database access denied. Check security rules.";
+      } else if (err.message === 'PERMISSION_DENIED') {
+        errorMessage = "Database access denied. Check security rules.";
+      }
+      
+      setToast({ message: errorMessage, show: true, error: true });
+    } finally {
+      setIsSaving(false);
+      setTimeout(() => setToast({ message: '', show: false }), 3000);
+    }
   };
 
   const handleDelete = () => {
@@ -35,8 +63,13 @@ const SettingsPage: React.FC = () => {
     navigate('/');
   };
 
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login');
+  };
+
   return (
-    <div className="p-6 max-w-md mx-auto">
+    <div className="p-6 max-w-md mx-auto min-h-screen pb-32">
       {/* Toast Notification */}
       <div className={`fixed top-8 left-1/2 -translate-x-1/2 z-[100] transition-all duration-300 ${toast.show ? 'translate-y-0 opacity-100' : '-translate-y-12 opacity-0'}`}>
         <div className={`${toast.error ? 'bg-red-500' : 'bg-slate-800'} text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-3`}>
@@ -45,11 +78,13 @@ const SettingsPage: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex items-center gap-4 mb-8">
-        <button onClick={() => navigate('/profile')} className="p-2 -ml-2 text-slate-600 active:scale-90 transition-transform">
-          <ChevronLeft size={28} />
-        </button>
-        <h1 className="text-3xl font-black text-slate-800 tracking-tight">Settings</h1>
+      <div className="flex justify-between items-center mb-8">
+        <div className="flex items-center gap-4">
+          <button onClick={() => navigate('/profile')} className="p-2 -ml-2 text-slate-600 active:scale-90 transition-transform">
+            <ChevronLeft size={28} />
+          </button>
+          <h1 className="text-3xl font-black text-slate-800 tracking-tight">Settings</h1>
+        </div>
       </div>
 
       {/* Account Details Section */}
@@ -58,16 +93,27 @@ const SettingsPage: React.FC = () => {
         
         <div className="space-y-6">
           <div className="space-y-1.5">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider ml-1">Email Address</label>
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider ml-1">Full Name</label>
             <input 
-              type="email" 
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              type="text" 
+              value={name}
+              onChange={(e) => setName(e.target.value)}
               className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3.5 text-slate-800 font-bold text-sm outline-none focus:bg-white focus:border-red-200 transition-all"
             />
           </div>
 
           <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider ml-1">Email Address</label>
+            <input 
+              type="email" 
+              value={email}
+              disabled
+              className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3.5 text-slate-400 font-bold text-sm outline-none cursor-not-allowed opacity-60"
+            />
+            <p className="text-[9px] font-bold text-slate-300 ml-1">Email cannot be changed directly.</p>
+          </div>
+
+          <div className="space-y-1.5 pt-2 border-t border-slate-50">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider ml-1">New Password</label>
             <input 
               type="password" 
@@ -91,12 +137,24 @@ const SettingsPage: React.FC = () => {
 
           <button 
             onClick={handleSave}
-            className="w-full bg-[#1e293b] text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg active:scale-[0.98] transition-all"
+            disabled={isSaving}
+            className="w-full bg-[#1e293b] text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg active:scale-[0.98] transition-all disabled:opacity-50"
           >
             <Save size={18} />
-            <span>Save Changes</span>
+            <span>{isSaving ? 'Saving...' : 'Save Changes'}</span>
           </button>
         </div>
+      </div>
+
+      {/* Logout Section */}
+      <div className="mb-8">
+        <button 
+          onClick={handleLogout}
+          className="w-full bg-white text-slate-800 border-2 border-slate-100 font-black py-4 rounded-2xl flex items-center justify-center gap-3 hover:bg-slate-50 transition-all active:scale-[0.98] shadow-sm"
+        >
+          <LogOut size={20} className="text-[#ff6b6b]" />
+          <span>Log Out</span>
+        </button>
       </div>
 
       {/* Danger Zone */}

@@ -1,3 +1,4 @@
+
 export type DayOfWeek = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
 
 export interface ClassSchedule {
@@ -52,6 +53,7 @@ export interface UserState {
   lastActiveDate: string; // ISO String
   lastCheckInDates: Record<string, string>; // { classId: lastDateCheckedInISO }
   classes: ClassSchedule[];
+  totalCheckIns: number;
   totalSessions: number;
   friendsCount: number;
   syncHistory: SyncHistoryEntry[];
@@ -63,15 +65,21 @@ export interface UserState {
 
 export interface AppContextType {
   user: UserState | null;
+  loading: boolean;
   checkIn: (classId: string, buddyCount?: number) => void;
   updateDailyGoal: (goal: number) => void;
   addClass: (newClass: ClassSchedule) => void;
   removeClass: (id: string) => void;
   editClass: (updatedClass: ClassSchedule) => void;
   getInitials: () => string;
-  updateSettings: (email: string, password?: string) => void;
+  updateSettings: (email: string, password?: string) => Promise<void>;
   deleteAccount: () => void;
-  performGroupSync: (targetId: string, sharedClasses?: string[]) => void;
+  performGroupSync: (targetId: string, sharedClasses?: string[]) => Promise<void>;
+  findUserById: (id: string) => Promise<{ name: string; email: string; uid: string } | null>;
   logStudySession: (minutes: number, selectedBuddyIds: string[]) => void;
   redeemReward: (rewardName: string, cost: number) => boolean;
+  signup: (email: string, password: string, fullName: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
+  updateName: (newName: string) => Promise<void>;
 }

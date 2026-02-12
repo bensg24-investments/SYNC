@@ -1,103 +1,161 @@
+
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserState, ClassSchedule, AppContextType, SyncHistoryEntry, StudySession, Buddy, RedemptionHistoryEntry } from './types';
+import { auth, db } from './firebase';
+import { 
+  onAuthStateChanged, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut,
+  updateProfile,
+  updatePassword,
+  User as FirebaseUser
+} from 'firebase/auth';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 
-const STORAGE_KEY = 'sync_code_user_data';
-
-const MOCK_BUDDIES: Buddy[] = [
-  { id: 'b1', name: 'Sarah Miller', initials: 'SM', sharedClasses: ['Accounting 101'], attendingClasses: ['Accounting 101', 'Marketing 201'] },
-  { id: 'b2', name: 'James Low', initials: 'JL', sharedClasses: [], attendingClasses: ['Marketing 201'] },
-  { id: 'b3', name: 'Emma Rose', initials: 'ER', sharedClasses: ['Accounting 101'], attendingClasses: ['Accounting 101'] },
-  { id: 'b4', name: 'Oliver Twist', initials: 'OT', sharedClasses: [], attendingClasses: ['UX Design 101'] },
-  { id: 'b5', name: 'Kate Lane', initials: 'KL', sharedClasses: ['Marketing 201'], attendingClasses: ['Marketing 201', 'Accounting 101'] },
-  { id: 'b6', name: 'Olivia Todd', initials: 'OT', sharedClasses: ['Accounting 101'], attendingClasses: ['Accounting 101'] },
-];
-
-const DEFAULT_USER: UserState = {
-  id: "SYNC-BRU-7721",
-  name: "Bruno Ashton",
-  major: "Freshman - UX Design",
-  email: "bruno.ashton@university.edu",
-  password: "password123",
-  totalPoints: 850,
-  dailyPoints: 70,
-  dailyGoal: 1000,
-  streak: 7,
-  lastActiveDate: new Date().toISOString(),
-  lastCheckInDates: {},
-  classes: [
-    {
-      id: '1',
-      name: 'Accounting 101',
-      location: 'Tanner Building',
-      time: '08:00 AM',
-      daysOfWeek: ['Mon', 'Wed', 'Fri'],
-      quantityPerWeek: 3
-    }
-  ],
-  totalSessions: 15,
-  friendsCount: 6,
-  syncHistory: [
-    { id: 'h1', name: 'Sarah M.', points: 50, timestamp: new Date(Date.now() - 1000 * 60 * 120).toISOString() },
-    { id: 'h2', name: 'James L.', points: 50, timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString() }
-  ],
-  redemptionHistory: [],
-  buddies: MOCK_BUDDIES,
-  studyLog: [],
-  dailyStudyPoints: 0
-};
+const STORAGE_PREFIX = 'sync_code_user_';
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<UserState | null>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
+  const [user, setUser] = useState<UserState | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Helper to load user-specific data from storage
+  const loadUserData = (fbUser: FirebaseUser): UserState => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}${fbUser.uid}`);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (!parsed) return DEFAULT_USER;
-        
         const today = new Date();
         const lastActive = new Date(parsed.lastActiveDate);
         
-        const todayStr = today.toDateString();
-        const lastActiveStr = lastActive.toDateString();
+        // Update user state with latest Firebase info (name/email) if changed
+        const updatedFromFirebase = {
+          ...parsed,
+          name: fbUser.displayName || parsed.name || "User",
+          email: fbUser.email || parsed.email || "",
+          totalCheckIns: parsed.totalCheckIns || 0
+        };
 
-        if (todayStr === lastActiveStr) {
-          return parsed;
+        if (today.toDateString() === lastActive.toDateString()) {
+          return updatedFromFirebase;
         }
 
         const yesterday = new Date();
         yesterday.setDate(today.getDate() - 1);
-        const yesterdayStr = yesterday.toDateString();
-
         let updatedStreak = parsed.streak;
-        if (lastActiveStr === yesterdayStr) {
+        if (lastActive.toDateString() === yesterday.toDateString()) {
           updatedStreak += 1;
         } else {
           updatedStreak = 1;
         }
 
         return {
-          ...parsed,
+          ...updatedFromFirebase,
           dailyPoints: 0,
           dailyStudyPoints: 0, 
           streak: updatedStreak,
           lastActiveDate: today.toISOString()
         };
       } catch (e) {
-        return DEFAULT_USER;
+        console.error("Failed to parse user data", e);
       }
     }
-    return DEFAULT_USER;
-  });
+
+    // Default state for new authenticated user
+    return {
+      id: fbUser.uid,
+      name: fbUser.displayName || "New User",
+      major: "Student",
+      email: fbUser.email || "",
+      totalPoints: 0,
+      dailyPoints: 0,
+      dailyGoal: 1000,
+      streak: 1,
+      lastActiveDate: new Date().toISOString(),
+      lastCheckInDates: {},
+      classes: [],
+      totalCheckIns: 0,
+      totalSessions: 0,
+      friendsCount: 0,
+      syncHistory: [],
+      redemptionHistory: [],
+      buddies: [],
+      studyLog: [],
+      dailyStudyPoints: 0
+    };
+  };
 
   useEffect(() => {
-    if (user) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
-    } else {
-      localStorage.removeItem(STORAGE_KEY);
+    const unsubscribe = onAuthStateChanged(auth, (fbUser) => {
+      if (fbUser) {
+        const userData = loadUserData(fbUser);
+        setUser(userData);
+      } else {
+        setUser(null);
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (user && user.id) {
+      localStorage.setItem(`${STORAGE_PREFIX}${user.id}`, JSON.stringify(user));
     }
   }, [user]);
+
+  // Auth Actions
+  const signup = async (email: string, password: string, fullName: string) => {
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    const fbUser = cred.user;
+    
+    // Crucial Step: Wait for profile update to finish
+    await updateProfile(fbUser, { displayName: fullName });
+    
+    // Create Firestore database entry for public profile
+    try {
+      await setDoc(doc(db, "users", fbUser.uid), {
+        name: fullName,
+        email: email,
+        uid: fbUser.uid,
+        photoURL: "",
+        classes: [] 
+      });
+    } catch (dbError: any) {
+      console.error("Firestore permission error during signup:", dbError);
+      if (dbError.code === 'permission-denied') {
+        throw new Error("PROFILE_DB_ERROR");
+      }
+    }
+    
+    const userData = loadUserData(fbUser);
+    setUser({ ...userData, name: fullName });
+  };
+
+  const login = async (email: string, password: string) => {
+    await signInWithEmailAndPassword(auth, email, password);
+  };
+
+  const logout = async () => {
+    try {
+      await signOut(auth);
+      setUser(null);
+    } catch (error) {
+      console.error("Logout failed", error);
+    }
+  };
+
+  const updateName = async (newName: string) => {
+    if (auth.currentUser) {
+      await updateProfile(auth.currentUser, { displayName: newName });
+      // Also update Firestore
+      await setDoc(doc(db, "users", auth.currentUser.uid), { name: newName }, { merge: true });
+      setUser(prev => prev ? ({ ...prev, name: newName }) : null);
+    }
+  };
 
   const checkIn = (classId: string, buddyCount: number = 0) => {
     if (!user) return;
@@ -105,29 +163,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (user.lastCheckInDates[classId] === today) return;
 
     const pointsEarned = 50 + (buddyCount * 10);
-
     setUser(prev => prev ? ({
       ...prev,
       dailyPoints: prev.dailyPoints + pointsEarned,
       totalPoints: prev.totalPoints + pointsEarned,
-      lastCheckInDates: {
-        ...prev.lastCheckInDates,
-        [classId]: today
-      }
+      totalCheckIns: (prev.totalCheckIns || 0) + 1,
+      lastCheckInDates: { ...prev.lastCheckInDates, [classId]: today }
     }) : null);
   };
 
   const logStudySession = (minutes: number, selectedBuddyIds: string[]) => {
     if (!user || minutes <= 0) return;
-
     const basePoints = Math.floor(minutes / 30) * 10;
-    
     let buddyBonus = 0;
     selectedBuddyIds.forEach(id => {
       const buddy = user.buddies.find(b => b.id === id);
-      if (buddy) {
-        buddyBonus += (buddy.sharedClasses && buddy.sharedClasses.length > 0) ? 20 : 10;
-      }
+      if (buddy) buddyBonus += (buddy.sharedClasses?.length > 0) ? 20 : 10;
     });
 
     const totalEarned = basePoints + buddyBonus;
@@ -168,36 +219,66 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }) : null);
   };
 
-  const updateSettings = (email: string, password?: string) => {
-    setUser(prev => prev ? ({
-      ...prev,
-      email,
-      ...(password ? { password } : {})
-    }) : null);
+  const updateSettings = async (email: string, password?: string) => {
+    if (!auth.currentUser) return;
+
+    try {
+      if (password) {
+        await updatePassword(auth.currentUser, password);
+      }
+      
+      setUser(prev => prev ? ({ ...prev, email }) : null);
+    } catch (error) {
+      console.error("Error updating settings", error);
+      throw error;
+    }
   };
 
   const deleteAccount = () => {
-    setUser(null);
+    const currentUser = auth.currentUser;
+    if (currentUser) {
+      currentUser.delete().then(() => {
+        localStorage.removeItem(`${STORAGE_PREFIX}${currentUser.uid}`);
+        setUser(null);
+      }).catch(err => console.error("Error deleting account", err));
+    }
   };
 
-  const performGroupSync = (targetId: string, sharedClasses: string[] = []) => {
-    if (!user || targetId === user.id) return;
-    
-    const buddyExists = user.buddies.some(b => b.id === targetId);
-    const friendIdPart = targetId.split('-').pop() || 'Unknown';
-    const friendName = targetId === 'SYNC-JOR-1234' ? 'Jordan Smith' : `Sync Buddy ${friendIdPart}`;
-    const initials = friendName.split(' ').map(n => n[0]).join('').toUpperCase();
+  const findUserById = async (id: string) => {
+    try {
+      const docRef = doc(db, "users", id);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        return docSnap.data() as { name: string; email: string; uid: string };
+      }
+      return null;
+    } catch (error: any) {
+      console.error("Firestore error in findUserById:", error);
+      if (error.code === 'permission-denied') {
+        throw new Error("PERMISSION_DENIED");
+      }
+      throw error;
+    }
+  };
 
-    const attendingClasses = targetId === 'SYNC-JOR-1234' 
-      ? ['Accounting 101', 'History 101', 'Calculus II', 'Intro to UX'] 
-      : (user.classes.length > 0 ? [user.classes[0].name] : []);
+  const performGroupSync = async (targetId: string, sharedClasses: string[] = []) => {
+    if (!user) return;
+    if (targetId === user.id) throw new Error("You cannot sync with yourself!");
+
+    // Lookup real profile from Firestore
+    const userData = await findUserById(targetId);
+    if (!userData) throw new Error("User not found");
+
+    const friendName = userData.name;
+    const initials = friendName.split(' ').map(n => n[0]).join('').toUpperCase();
+    const buddyExists = user.buddies.some(b => b.id === targetId);
 
     const newBuddy: Buddy = {
       id: targetId,
       name: friendName,
       initials: initials,
       sharedClasses: sharedClasses,
-      attendingClasses: Array.from(new Set([...attendingClasses, ...sharedClasses]))
+      attendingClasses: sharedClasses
     };
 
     const newEntry: SyncHistoryEntry = {
@@ -209,13 +290,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setUser(prev => {
       if (!prev) return null;
-      
       const updatedBuddies = buddyExists 
-        ? prev.buddies.map(b => b.id === targetId ? { 
-            ...b, 
-            sharedClasses: Array.from(new Set([...b.sharedClasses, ...sharedClasses])),
-            attendingClasses: Array.from(new Set([...b.attendingClasses, ...sharedClasses]))
-          } : b)
+        ? prev.buddies.map(b => b.id === targetId ? { ...b, sharedClasses: Array.from(new Set([...b.sharedClasses, ...sharedClasses])) } : b)
         : [...prev.buddies, newBuddy];
 
       return {
@@ -231,23 +307,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const redeemReward = (rewardName: string, cost: number): boolean => {
     if (!user || user.totalPoints < cost) return false;
-
     const newRedemption: RedemptionHistoryEntry = {
       id: Math.random().toString(36).substr(2, 9),
-      rewardName,
-      cost,
-      timestamp: new Date().toISOString()
+      rewardName, cost, timestamp: new Date().toISOString()
     };
-
-    setUser(prev => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        totalPoints: prev.totalPoints - cost,
-        redemptionHistory: [newRedemption, ...prev.redemptionHistory]
-      };
-    });
-
+    setUser(prev => prev ? ({
+      ...prev,
+      totalPoints: prev.totalPoints - cost,
+      redemptionHistory: [newRedemption, ...prev.redemptionHistory]
+    }) : null);
     return true;
   };
 
@@ -260,9 +328,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   return (
     <AppContext.Provider value={{ 
-      user, checkIn, updateDailyGoal, addClass, removeClass, editClass, 
-      getInitials, updateSettings, deleteAccount, performGroupSync, logStudySession,
-      redeemReward
+      user, loading, checkIn, updateDailyGoal, addClass, removeClass, editClass, 
+      getInitials, updateSettings, deleteAccount, performGroupSync, findUserById, logStudySession,
+      redeemReward, signup, login, logout, updateName
     }}>
       {children}
     </AppContext.Provider>

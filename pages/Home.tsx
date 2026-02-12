@@ -1,6 +1,7 @@
+
 import React, { useState } from 'react';
 import { useApp } from '../AppContext';
-import { User, Zap, MapPin, Clock, CheckCircle } from 'lucide-react';
+import { User, Zap, MapPin, Clock, CheckCircle, Calendar, BookOpen, Users, TrendingUp } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { DayOfWeek, ClassSchedule } from '../types';
 import CheckInModal from '../components/CheckInModal';
@@ -56,7 +57,7 @@ const HomePage: React.FC = () => {
     setTimeout(() => setShowSuccess(false), 3000);
   };
 
-  const ClassCard = ({ c }: { c: ClassSchedule }) => {
+  const ClassCard: React.FC<{ c: ClassSchedule }> = ({ c }) => {
     const hasCheckedInToday = user?.lastCheckInDates[c.id] === todayDateString;
     
     return (
@@ -80,15 +81,6 @@ const HomePage: React.FC = () => {
             <MapPin size={16} strokeWidth={2.5} />
             <span>{c.location}</span>
           </div>
-        </div>
-
-        <div className="flex items-center gap-3 bg-slate-50 p-4 rounded-3xl mb-8">
-          <div className="flex -space-x-2">
-            {['ER', 'KL', 'OT'].map((initials, idx) => (
-              <div key={idx} className="w-8 h-8 rounded-full bg-slate-300 border-2 border-white flex items-center justify-center text-[10px] text-white font-black">{initials}</div>
-            ))}
-          </div>
-          <span className="text-[11px] font-black text-slate-400 uppercase tracking-tight">Sync active with classmates</span>
         </div>
 
         {!hasCheckedInToday ? (

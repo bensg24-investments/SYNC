@@ -1,41 +1,52 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../AppContext';
-import { Users, Info, CheckCircle, RefreshCcw, Search, X, Check } from 'lucide-react';
+import { Users, Info, CheckCircle, RefreshCcw, Search, X, Check, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import QRCode from 'react-qr-code';
 import { Html5Qrcode } from 'html5-qrcode';
 
-// Mock Friend Data for Manual Search
-const MOCK_FOUND_USER = {
-  id: 'SYNC-JOR-1234',
-  name: 'Jordan Smith',
-  major: 'Sophomore - CS',
-  initials: 'JS',
-  classes: ['Accounting 101', 'History 101', 'Calculus II', 'Intro to UX']
-};
-
 const AddBuddyModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
-  const { user, performGroupSync } = useApp();
+  const { user, performGroupSync, findUserById } = useApp();
   const [searchId, setSearchId] = useState('');
   const [isSearching, setIsSearching] = useState(false);
-  const [foundUser, setFoundUser] = useState<typeof MOCK_FOUND_USER | null>(null);
+  const [foundUser, setFoundUser] = useState<{ name: string; uid: string; initials: string; classes: string[] } | null>(null);
   const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
 
-  const handleSearch = () => {
+  const handleSearch = async () => {
     if (!searchId.trim()) return;
     setIsSearching(true);
     setError(null);
     
-    setTimeout(() => {
-      setIsSearching(false);
+    try {
       if (searchId === user?.id) {
         setError("You cannot search for yourself!");
         return;
       }
-      setFoundUser(MOCK_FOUND_USER);
-    }, 600);
+      
+      const userData = await findUserById(searchId);
+      if (userData) {
+        setFoundUser({
+          uid: userData.uid,
+          name: userData.name,
+          initials: userData.name.split(' ').map(n => n[0]).join('').toUpperCase(),
+          classes: ['General Study'] 
+        });
+      } else {
+        setError("User not found. Check the ID and try again.");
+      }
+    } catch (err: any) {
+      console.error(err);
+      if (err.message === 'PERMISSION_DENIED') {
+        setError("Database access denied. Check security rules.");
+      } else {
+        setError("An error occurred during search.");
+      }
+    } finally {
+      setIsSearching(false);
+    }
   };
 
   const toggleClass = (className: string) => {
@@ -44,10 +55,21 @@ const AddBuddyModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     );
   };
 
-  const handleAddBuddy = () => {
+  const handleAddBuddy = async () => {
     if (!foundUser) return;
-    performGroupSync(foundUser.id, selectedClasses);
-    onClose();
+    setIsSyncing(true);
+    try {
+      await performGroupSync(foundUser.uid, selectedClasses);
+      onClose();
+    } catch (err: any) {
+      if (err.message === 'PERMISSION_DENIED') {
+        setError("Database access denied. Check security rules.");
+      } else {
+        setError(err.message || "Failed to add buddy.");
+      }
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   return (
@@ -63,16 +85,16 @@ const AddBuddyModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
         {!foundUser ? (
           <div className="space-y-6">
-            <p className="text-slate-500 font-bold text-sm leading-relaxed">Enter a Friend ID to find them on Sync Code.</p>
+            <p className="text-slate-500 font-bold text-sm leading-relaxed">Enter a Friend UID to find them on Sync Code.</p>
             
             <div className="flex gap-2">
               <div className="flex-1 relative">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
                 <input 
                   type="text" 
-                  placeholder="e.g. SYNC-1234"
+                  placeholder="Paste UID here"
                   value={searchId}
-                  onChange={(e) => setSearchId(e.target.value.toUpperCase())}
+                  onChange={(e) => setSearchId(e.target.value.trim())}
                   className="w-full bg-[#f8fafc] border border-slate-100 rounded-2xl pl-12 pr-4 py-4 text-slate-800 font-black text-sm outline-none focus:border-red-400 focus:bg-white transition-all shadow-inner"
                   autoFocus
                 />
@@ -80,12 +102,12 @@ const AddBuddyModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               <button 
                 onClick={handleSearch}
                 disabled={isSearching || !searchId.trim()}
-                className="bg-[#1e293b] text-white px-6 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all disabled:opacity-50 shadow-lg shadow-slate-200"
+                className="bg-[#1e293b] text-white px-6 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all disabled:opacity-50 shadow-lg shadow-slate-200 flex items-center justify-center min-w-[70px]"
               >
-                {isSearching ? '...' : 'Find'}
+                {isSearching ? <Loader2 size={16} className="animate-spin" /> : 'Find'}
               </button>
             </div>
-            {error && <p className="text-red-500 text-[10px] font-black uppercase tracking-widest ml-1">{error}</p>}
+            {error && <p className="text-red-500 text-[10px] font-black uppercase tracking-widest ml-1 leading-tight">{error}</p>}
           </div>
         ) : (
           <div className="animate-in fade-in slide-in-from-bottom-2">
@@ -93,14 +115,14 @@ const AddBuddyModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               <div className="w-16 h-16 rounded-full bg-[#ff6b6b] flex items-center justify-center text-xl font-black text-white shadow-lg shadow-red-100">
                 {foundUser.initials}
               </div>
-              <div>
-                <h4 className="text-xl font-black text-slate-800 tracking-tight leading-none mb-1">{foundUser.name}</h4>
-                <p className="text-slate-400 font-bold text-xs">{foundUser.major}</p>
+              <div className="overflow-hidden">
+                <h4 className="text-xl font-black text-slate-800 tracking-tight leading-none mb-1 truncate">{foundUser.name}</h4>
+                <p className="text-slate-400 font-bold text-[10px] truncate">{foundUser.uid}</p>
               </div>
             </div>
 
             <div className="mb-10">
-              <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 ml-1">Select Shared Classes</h5>
+              <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 ml-1">Confirm Shared Classes</h5>
               <div className="space-y-2 max-h-48 overflow-y-auto pr-1 scrollbar-hide">
                 {foundUser.classes.map(className => (
                   <button 
@@ -119,11 +141,14 @@ const AddBuddyModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               </div>
             </div>
 
+            {error && <p className="text-red-500 text-[10px] font-black uppercase tracking-widest mb-4 ml-1 leading-tight">{error}</p>}
+
             <button 
               onClick={handleAddBuddy}
-              className="w-full bg-[#1e293b] text-white font-black py-5 rounded-[24px] shadow-xl shadow-slate-200 active:scale-[0.98] transition-all uppercase text-xs tracking-widest"
+              disabled={isSyncing}
+              className="w-full bg-[#1e293b] text-white font-black py-5 rounded-[24px] shadow-xl shadow-slate-200 active:scale-[0.98] transition-all uppercase text-xs tracking-widest flex items-center justify-center gap-2"
             >
-              Add Buddy
+              {isSyncing ? <Loader2 size={16} className="animate-spin" /> : 'Add Buddy'}
             </button>
           </div>
         )}
@@ -138,21 +163,19 @@ const ScanPage: React.FC = () => {
   const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
   const qrScannerRef = useRef<Html5Qrcode | null>(null);
   const isTransitioning = useRef(false);
 
   if (!user) return null;
 
-  // Managed Scanner Effect - Improved Lifecycle
   useEffect(() => {
     let isMounted = true;
 
     const manageScanner = async () => {
-      // We only start the scanner if the tab is correct AND no modal is blocking it
-      if (activeTab === 'scan-id' && !syncSuccess && !showAddModal) {
+      if (activeTab === 'scan-id' && !syncSuccess && !showAddModal && !isProcessing) {
         if (isMounted) await startScanner();
       } else {
-        // If we switch to "My ID", we MUST stop and clear the scanner
         if (isMounted) await stopScanner();
       }
     };
@@ -163,12 +186,11 @@ const ScanPage: React.FC = () => {
       isMounted = false;
       stopScanner();
     };
-  }, [activeTab, syncSuccess, showAddModal]);
+  }, [activeTab, syncSuccess, showAddModal, isProcessing]);
 
   const startScanner = async () => {
     if (isTransitioning.current) return;
     
-    // Safety check: clear container before starting
     const container = document.getElementById("scanner-container");
     if (container) container.innerHTML = '';
 
@@ -204,11 +226,9 @@ const ScanPage: React.FC = () => {
         }
         qrScannerRef.current = null;
         
-        // Final cleanup of the DOM node to prevent "glitches"
         const container = document.getElementById("scanner-container");
         if (container) container.innerHTML = '';
       } catch (err) {
-        // Ignore transition errors from rapid toggling
         qrScannerRef.current = null;
       } finally {
         isTransitioning.current = false;
@@ -216,15 +236,25 @@ const ScanPage: React.FC = () => {
     }
   };
 
-  const handleScanSuccess = (decodedText: string) => {
-    if (decodedText === user.id) {
-      setScanError("You cannot sync with yourself!");
-      return;
+  const handleScanSuccess = async (decodedText: string) => {
+    if (isProcessing) return;
+    setIsProcessing(true);
+    setScanError(null);
+    
+    try {
+      await performGroupSync(decodedText);
+      setSyncSuccess(decodedText);
+      await stopScanner();
+      setTimeout(() => setSyncSuccess(null), 5000);
+    } catch (err: any) {
+      if (err.message === 'PERMISSION_DENIED') {
+        setScanError("Database access denied. Check security rules.");
+      } else {
+        setScanError(err.message || "Failed to sync with buddy.");
+      }
+    } finally {
+      setIsProcessing(false);
     }
-    performGroupSync(decodedText);
-    setSyncSuccess(decodedText);
-    stopScanner();
-    setTimeout(() => setSyncSuccess(null), 5000);
   };
 
   const getTimeAgo = (timestamp: string) => {
@@ -264,7 +294,6 @@ const ScanPage: React.FC = () => {
 
       {activeTab === 'my-id' ? (
         <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-          {/* My ID Card - Styled to match screenshot */}
           <div className="bg-white rounded-[44px] p-10 pb-14 shadow-2xl shadow-slate-200 border border-slate-50 mb-10 flex flex-col items-center">
              <div className="w-full bg-slate-50 rounded-[32px] p-10 border border-slate-100 shadow-inner mb-10 aspect-[3/4] flex items-center justify-center">
               <QRCode 
@@ -275,8 +304,8 @@ const ScanPage: React.FC = () => {
                 fgColor="#1e293b"
               />
             </div>
-            <p className="text-[10px] font-black text-slate-300 uppercase tracking-[0.4em] mb-1">Your Unique ID</p>
-            <h3 className="text-lg font-black text-slate-800 tracking-tight">{user.id}</h3>
+            <p className="text-[10px] font-black text-slate-300 uppercase tracking-[0.4em] mb-1 text-center">Your Unique ID</p>
+            <h3 className="text-[10px] font-black text-slate-800 tracking-tight break-all text-center px-4">{user.id}</h3>
           </div>
 
           <div className="px-2">
@@ -314,10 +343,16 @@ const ScanPage: React.FC = () => {
                   <CheckCircle size={48} />
                 </div>
                 <h3 className="text-2xl font-black mb-2 tracking-tight">Sync Success!</h3>
-                <p className="font-bold text-white/80">Connected with {syncSuccess}</p>
+                <p className="font-bold text-white/80 truncate w-full">Connected with {syncSuccess}</p>
                 <div className="mt-8 bg-black/10 px-6 py-2 rounded-full font-black text-sm uppercase tracking-widest">
                   +50 Points Earned
                 </div>
+              </div>
+            ) : isProcessing ? (
+              <div className="absolute inset-0 z-20 bg-slate-800/80 flex flex-col items-center justify-center text-white p-8 text-center">
+                <Loader2 size={48} className="animate-spin mb-4" />
+                <h3 className="text-xl font-black tracking-tight">Connecting...</h3>
+                <p className="text-sm text-white/60 font-bold uppercase tracking-widest mt-2">Checking Permissions</p>
               </div>
             ) : (
               <>
@@ -336,10 +371,10 @@ const ScanPage: React.FC = () => {
                 {scanError && (
                    <div className="absolute inset-0 bg-slate-900/90 flex flex-col items-center justify-center text-center p-8 z-20">
                     <Info size={40} className="text-red-400 mb-4" />
-                    <p className="text-white font-black text-sm uppercase tracking-widest mb-6 leading-relaxed">{scanError}</p>
+                    <p className="text-white font-black text-sm uppercase tracking-widest mb-6 leading-relaxed px-4">{scanError}</p>
                     <button 
-                      onClick={() => { setScanError(null); startScanner(); }}
-                      className="px-8 py-3 bg-white text-slate-800 rounded-full font-black text-xs uppercase tracking-widest shadow-lg"
+                      onClick={() => { setScanError(null); setIsProcessing(false); startScanner(); }}
+                      className="px-8 py-3 bg-white text-slate-800 rounded-full font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-transform"
                     >
                       Try Again
                     </button>
